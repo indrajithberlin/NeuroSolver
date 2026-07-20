@@ -339,7 +339,7 @@ https://github.com/indrajithberlin
 
 **LinkedIn**
 
-https://www.linkedin.com/in/indrajithberlin/
+https://www.linkedin.com/in/indrajith-berlin
 
 ---
 
