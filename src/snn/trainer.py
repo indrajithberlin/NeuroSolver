@@ -1,14 +1,19 @@
 """
 trainer.py
 
-Training utilities for NeuroSolver.
+Training and validation utilities for NeuroSolver.
 """
 
 import torch
 from snntorch import spikegen
-from utils import save_checkpoint
-from metrics import calculate_accuracy
 
+from metrics import calculate_accuracy
+from utils import save_checkpoint
+
+
+# ==========================================================
+# Train One Epoch
+# ==========================================================
 
 def train_one_epoch(
     model,
@@ -21,20 +26,10 @@ def train_one_epoch(
     """
     Train the model for one epoch.
 
-    Args:
-        model: SNN model
-        dataloader: Training DataLoader
-        optimizer: Optimizer
-        criterion: Loss function
-        device: CPU or CUDA
-        num_steps: Number of simulation time steps
-
     Returns:
-        tuple:
-            (average_loss, average_accuracy)
+        (loss, accuracy)
     """
 
-    # Set model to training mode
     model.train()
 
     running_loss = 0.0
@@ -42,51 +37,48 @@ def train_one_epoch(
 
     for images, labels in dataloader:
 
-        # Move data to device
         images = images.to(device)
         labels = labels.to(device)
 
-        # Flatten images
         images = images.view(images.size(0), -1)
 
-        # Convert images to spike trains
         spike_data = spikegen.rate(
             images,
             num_steps=num_steps
         )
 
-        # Forward pass
         spk_rec, _ = model(spike_data)
 
-        # Decode output by counting spikes
         spike_counts = spk_rec.sum(dim=0)
 
-        # Compute loss
         loss = criterion(
             spike_counts,
             labels
         )
 
-        # Backpropagation
         optimizer.zero_grad()
+
         loss.backward()
+
         optimizer.step()
 
-        # Compute accuracy
         accuracy = calculate_accuracy(
             spike_counts,
             labels
         )
 
-        # Accumulate statistics
         running_loss += loss.item()
         running_accuracy += accuracy
 
-    # Average metrics over all batches
     epoch_loss = running_loss / len(dataloader)
     epoch_accuracy = running_accuracy / len(dataloader)
 
     return epoch_loss, epoch_accuracy
+
+
+# ==========================================================
+# Validation
+# ==========================================================
 
 def validate(
     model,
@@ -96,71 +88,87 @@ def validate(
     num_steps
 ):
     """
-    Validate the model for one epoch.
-
-    Args:
-        model: SNN model
-        dataloader: Validation/Test DataLoader
-        criterion: Loss function
-        device: CPU or CUDA
-        num_steps: Number of simulation time steps
+    Validate the model.
 
     Returns:
-        tuple:
-            (average_loss, average_accuracy)
+        loss,
+        accuracy,
+        labels,
+        predictions,
+        images
     """
 
-    # Set model to evaluation mode
     model.eval()
 
     running_loss = 0.0
     running_accuracy = 0.0
 
-    # Disable gradient computation
+    all_labels = []
+    all_predictions = []
+    sample_images = []
+
     with torch.no_grad():
 
         for images, labels in dataloader:
 
-            # Move data to device
             images = images.to(device)
             labels = labels.to(device)
 
-            # Flatten images
+            # Save original images before flattening
+            sample_images.extend(images.cpu())
+
             images = images.view(images.size(0), -1)
 
-            # Convert images to spike trains
             spike_data = spikegen.rate(
                 images,
                 num_steps=num_steps
             )
 
-            # Forward pass
             spk_rec, _ = model(spike_data)
 
-            # Decode output
             spike_counts = spk_rec.sum(dim=0)
 
-            # Compute loss
             loss = criterion(
                 spike_counts,
                 labels
             )
 
-            # Compute accuracy
             accuracy = calculate_accuracy(
                 spike_counts,
                 labels
             )
 
-            # Accumulate metrics
+            predictions = torch.argmax(
+                spike_counts,
+                dim=1
+            )
+
             running_loss += loss.item()
             running_accuracy += accuracy
 
-    # Average metrics
+            all_labels.extend(
+                labels.cpu().numpy()
+            )
+
+            all_predictions.extend(
+                predictions.cpu().numpy()
+            )
+
     epoch_loss = running_loss / len(dataloader)
     epoch_accuracy = running_accuracy / len(dataloader)
 
-    return epoch_loss, epoch_accuracy
+    return (
+        epoch_loss,
+        epoch_accuracy,
+        all_labels,
+        all_predictions,
+        sample_images
+    )
+
+
+# ==========================================================
+# Fit
+# ==========================================================
 
 def fit(
     model,
@@ -175,12 +183,6 @@ def fit(
 ):
     """
     Train the model for multiple epochs.
-
-    Returns:
-        train_loss_history
-        train_accuracy_history
-        val_loss_history
-        val_accuracy_history
     """
 
     train_loss_history = []
@@ -204,7 +206,13 @@ def fit(
             num_steps
         )
 
-        val_loss, val_accuracy = validate(
+        (
+            val_loss,
+            val_accuracy,
+            _,
+            _,
+            _
+        ) = validate(
             model,
             val_loader,
             criterion,
